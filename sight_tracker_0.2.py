@@ -1,17 +1,24 @@
-import math
+# import imp
+# import math
+from random import randint
 from time import sleep
+from unittest import skip
 import cv2
 import mediapipe_lib as mp
 import pandas as pd
 import pyautogui
+import pygame
 from joblib import dump, load
 from sklearn.neighbors import KNeighborsClassifier
-from threading import Thread
-import training_routine
-import subprocess
+# from threading import Thread
+# import training_routine
+# import subprocess
 import os.path
+# from pywinauto import Application
+# from win32gui import SetForegroundWindow
+
 ##################  Global vars ########################
-model = "RidgeCVReg" # [knn_model, LinReg, RidgeCVReg]
+model = "LinReg" # [knn_model, LinReg, RidgeCVReg]
 model_x = load('Models/' + model + '_x.joblib')
 model_y = load('Models/' + model + '_y.joblib')
 
@@ -26,23 +33,36 @@ looking = []
 looking_X_stack = []
 looking_Y_stack = []
 
-def thread_run ():
-  training_routine.main()
+# def thread_run ():
+#   training_routine.main()
           
-mythread = Thread(target = thread_run, daemon = True)
+# mythread = Thread(target = thread_run, daemon = True)
 #########################################################
 
 
-while use_mode not in ["r", "t"]:
-  print("Record(r) or Test(t)")
+while use_mode not in ["tr", "te"]:
+  print("Training Mode(tr) or Test Mode(te)")
   use_mode = input()
-  if use_mode=="r":training_mode = True #<<<< True if you want csv output
+  if use_mode=="tr":training_mode = True #<<<< True if you want csv output
   else: pass
+
+if training_mode:
+  # initialize the pygame module
+  pygame.init()  
+  pygame.display.set_caption("Training Mode")
+  #load target image
+  image = pygame.image.load("img/target.png")  
+  screen = pygame.display.set_mode((1920,1080))
+  screen.blit(image, (0,0))
+  pygame.display.flip()
+  screen.fill((0,0,0))
+
+position = list()
 df_header = []
 df_rows = []
 
 # For webcam input:
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(4)
 
 with mp.face_mesh as face_mesh:
   while cap.isOpened():
@@ -53,9 +73,12 @@ with mp.face_mesh as face_mesh:
 
     results = mp.get_mesh(face_mesh, frame)
     
-    # Draw points of interest in face           
-    mp_landmarks = results.multi_face_landmarks[0].landmark # all points we get from mediapipe
-    
+    # Draw points of interest in face      
+    try:     
+      mp_landmarks = results.multi_face_landmarks[0].landmark # all points we get from mediapipe
+    except:
+      print("Ignoring empty camera frame.")
+      continue
     p_eyes = list(range(468,478)) # eye point ids   
     p_face = [9,10,108,151,337] # face point ids, refer to image > img/point_numbers.png
     
@@ -70,13 +93,14 @@ with mp.face_mesh as face_mesh:
 
     if len(points_list) > 0:
       # Log cordenates in csv for model training
-      if training_mode:        
-        # if routine:          
-        #   subprocess.run(r'python C:\Users\gabri\OneDrive\Documentos\GitHub\opencv_learning\training_routine.py') 
-        #   routine = False
-        #   sleep(6) # so you can click the window
-
-        
+      if training_mode: 
+        if len(df_rows)%100 < 1:          
+          screen.fill((0,0,0))                 
+          cord = (randint(20, 1900),randint(20, 1060))
+          position = [cord[0] + 25,cord[1] + 25]        
+          screen.blit(image, cord)
+          pygame.display.flip()
+          sleep(1)
         # Create dataframe with relative distances to point 151
         #  ----------------------151------
         df_header = p_eyes + ["head_rotation_hor"] + ["head_rotation_ver"] + ["head_pos"] + ["looking_pos"]
@@ -103,21 +127,21 @@ with mp.face_mesh as face_mesh:
 
           
         #Write DF to txt for modeling
-        looking_old = looking
-        with open(r'C:\Users\gabri\OneDrive\Documentos\GitHub\opencv_learning\training_pos.txt') as f:
-          try:
-            doc = f.readlines()[0]          
-            looking = doc.replace('[', "").replace(']', "").split(",")
-          except:
-            print("weird error")
-            continue          
-        if(looking_old != looking):
-          sleep(1.5)
-        row.append([int(looking[0]), int(looking[1])])
+        # looking_old = looking
+        # with open(r'C:\Users\gabri\OneDrive\Documentos\GitHub\opencv_learning\training_pos.txt') as f:
+        #   try:
+        #     doc = f.readlines()[0]          
+        #     looking = doc.replace('[', "").replace(']', "").split(",")
+        #   except:
+        #     print("weird error")
+        #     continue          
+        # if(looking_old != looking):
+        #   sleep(1.5)
+        row.append([int(position[0]), int(position[1])])
         df_rows = df_rows + [row]
-        if len(df_rows) >= 500:      #<<< Number of data points    
-          break
-        print(len(df_rows))
+        if len(df_rows) >= 3000:      #<<< Number of data points    
+          cap.release()
+        print(len(df_rows), position)
       
       else:
         # all_p = p_eyes + p_face
@@ -132,13 +156,28 @@ with mp.face_mesh as face_mesh:
           p_y_distance = y_base_distance/(mp_landmarks[p].y - mp_landmarks[151].y)
 
           row.append([p_x_distance,p_y_distance])
+        
+        head_rotation_hor = abs(mp_landmarks[108].x - mp_landmarks[151].x) - abs(mp_landmarks[337].x - mp_landmarks[151].x)
+        row.append([head_rotation_hor])
+
+        head_rotation_ver = abs(mp_landmarks[9].x - mp_landmarks[151].x) - abs(mp_landmarks[10].x - mp_landmarks[151].x)
+        row.append([head_rotation_ver])
+
+        head_pos = mp_landmarks[151]
+        row.append([head_pos.x, head_pos.y])
           # print(row)                    
           # z = int(cord[c].z)          
           
             #   456         457
-            # [234, 52]  [214, 32]        
-        looking_X = model_x.predict([row])
-        looking_Y = model_y.predict([row])  
+            # [234, 52]  [214, 32]  
+            # 
+        openrow = []
+        for l in row:
+          for v in l:
+            # print(v)
+            openrow.append(v)   
+        looking_X = model_x.predict([openrow])
+        looking_Y = model_y.predict([openrow])  
 
         # Average of last 10 positions for smoothing
         looking_X_stack.append(looking_X[0])        
@@ -163,16 +202,16 @@ with mp.face_mesh as face_mesh:
 
         # sleep(1)
 
-        print(looking_X)
+        # print(looking_X)
 
-        print(looking_X_stack)
+        # print(looking_X_stack)
 
         print(str(lx) + " | " + str(ly))
     # cv2.imshow('MediaPipe Face Mesh', cv2.flip(image, 1))
     cv2.imshow('MediaPipe Face Mesh', frame)
     # cv2.imshow('MediaPipe Face Mesh', cv2.rotate(cv2.flip(image, 1),cv2.ROTATE_90_COUNTERCLOCKWISE))
     if cv2.waitKey(5) & 0xFF == 27:      
-      break
+      cap.release()
 
 if training_mode:
   df = pd.DataFrame(df_rows, columns = df_header)
